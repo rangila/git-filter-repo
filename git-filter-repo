@@ -87,6 +87,28 @@ def _timedelta_to_seconds(delta):
   offset = delta.days*86400 + delta.seconds + (delta.microseconds+0.0)/1000000
   return round(offset)
 
+def _read_commit_map_from_file(path, metadata_dir=None, reverse = False):
+  """
+  Reads to dictionary files with SHA1 renaming
+  """
+  hash_mapping = {}
+  file_path = os.path.join(metadata_dir, path) if metadata_dir else path
+  try:
+    with open(file_path, 'br') as f:
+      check_commit_map_line_re = re.compile(b'^[0-9a-f]{40} [0-9a-f]{40}$')
+      for line in f:
+        if not check_commit_map_line_re.match(line):
+          continue
+        old_new_hash = line.rstrip(b"\n").split(b' ')
+        if not reverse:
+          hash_mapping[old_new_hash[0]] = old_new_hash[1]
+        else:
+          hash_mapping[old_new_hash[1]] = old_new_hash[0]
+  except IOError:
+    pass
+  finally:
+    return hash_mapping
+
 class FixedTimeZone(tzinfo):
   """
   Fixed offset in minutes east from UTC.
@@ -1671,6 +1693,10 @@ class FilteringOptions(object):
         namespace.path_changes = []
       namespace.path_changes += FilteringOptions.get_paths_from_file(values)
 
+  class AggregateCommitRenamesFileFilter(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+      namespace.aggregate_commit_renames_file = values
+
   @staticmethod
   def create_arg_parser():
     # Include usage in the summary, so we can put the description first
@@ -2014,6 +2040,10 @@ EXAMPLES
         #       "to new objects to the specified branch upon exit, and"
         #       "loading that mapping from that branch (if it exists) "
         #       "upon startup."))
+        help=argparse.SUPPRESS)
+    misc.add_argument('--aggregate-commit-renames-to', metavar='FILENAME',
+        type=os.fsencode,
+        action=FilteringOptions.AggregateCommitRenamesFileFilter, dest='aggregate_commit_renames_file',
         help=argparse.SUPPRESS)
     misc.add_argument('--stdin', action='store_true',
         help=_("Instead of running `git fast-export` and filtering its "
@@ -2774,6 +2804,15 @@ class RepoFilter(object):
     # the new_id can be None rather than a commit hash if the original
     # commit became empty and was pruned or was otherwise dropped.
     self._commit_renames = {}
+
+    # A dict of new_ids to riginal_ids from the previous run;
+    # It is used to construct the aggregated commit rename map
+    self._old_commit_reverse_renames = {}
+
+    # A dict of original_ids, from the first invocation,
+    # to new_ids, from the last invocation
+    # It is used to construct the aggregated commit rename map
+    self._aggregated_commit_renames = {}
 
     # A set of original_ids for which we have not yet gotten the
     # new_ids; we use OrderedDict because we need to know the order of
@@ -3774,13 +3813,35 @@ class RepoFilter(object):
     if p.wait():
       raise SystemExit(_("git update-ref failed; see above")) # pragma: no cover
 
+  def _read_aggregated_commit_renames(self):
+    aggregated_commit_reverse_renames = _read_commit_map_from_file(self._args.aggregate_commit_renames_file, reverse = True)
+    if not aggregated_commit_reverse_renames:
+      aggregated_commit_reverse_renames = self._old_commit_reverse_renames
+    if(self._args.debug):
+      print("[DEBUG] Reverse renames:\n" + str(aggregated_commit_reverse_renames))
+    if aggregated_commit_reverse_renames:
+      self._aggregated_commit_renames = {aggregated_commit_reverse_renames[k]:v for k,v in self._commit_renames.items() if k != deleted_hash}
+
   def _record_metadata(self, metadata_dir, orig_refs):
     self._flush_renames()
+
+    if self._args.aggregate_commit_renames_file and not self._aggregated_commit_renames:
+      # Read the old commit renames just before overwriting
+      self._old_commit_reverse_renames = _read_commit_map_from_file(b'commit-map', metadata_dir, reverse = True)
+
     with open(os.path.join(metadata_dir, b'commit-map'), 'bw') as f:
       f.write(("%-40s %s\n" % (_("old"), _("new"))).encode())
       for (old,new) in self._commit_renames.items():
         msg = b'%s %s\n' % (old, new if new != None else deleted_hash)
         f.write(msg)
+
+    if self._args.aggregate_commit_renames_file:
+      self._read_aggregated_commit_renames()
+      with open(self._args.aggregate_commit_renames_file, 'bw') as f:
+        f.write(("%-40s %s\n" % (_("old"), _("new"))).encode())
+        for (old,new) in self._aggregated_commit_renames.items():
+          msg = b'%s %s\n' % (old, new if new != None else deleted_hash)
+          f.write(msg)
 
     exported_refs, imported_refs = self.get_exported_and_imported_refs()
 
@@ -3978,3 +4039,5 @@ def main():
 
 if __name__ == '__main__':
   main()
+
+# vim: set sw=2:
