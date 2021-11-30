@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import sys
+import subprocess
+
+try:
+    from git_filter_repo import RepoFilter, FilteringOptions, _read_commit_map_from_file, FileChange
+except ImportError:
+    raise SystemExit(
+        "Error: Couldn't find git_filter_repo.py.  Did you forget to make a symlink to git-filter-repo named git_filter_repo.py or did you forget to put the latter in your PYTHONPATH?"
+    )
+
+
+FILE_MODE_SUBMODULE = b"160000"
+
+
+def parse_args(arguments):
+    parser = argparse.ArgumentParser(description="Run submodule aware git-filter-repo")
+    parser.add_argument("--commit-remap", type=os.fsencode, help=("Path to the commit remap"))
+    parsed_args, rest = parser.parse_known_args(arguments)
+    if not parsed_args.commit_remap:
+        raise SystemExit("Error: Need to specify the --commit-remap path")
+    return (parsed_args, rest)
+
+
+class SubmoduleRenames:
+    def __init__(self, path: bytes):
+        self._aggregated_commit_renames = _read_commit_map_from_file(path)
+        if not self._aggregated_commit_renames:
+            raise SystemExit("Error: empty commit remap")
+
+    def _remap_hash(self, file_change: FileChange) -> FileChange:
+        if (file_change.mode == FILE_MODE_SUBMODULE) and (file_change.blob_id in self._aggregated_commit_renames):
+            file_change.blob_id = self._aggregated_commit_renames[file_change.blob_id]
+        return file_change
+
+    def replace_submodule_renames(self, commit, metadata):
+        commit.file_changes = [self._remap_hash(file_change) for file_change in commit.file_changes]
+
+
+def main():
+    parsed_args, forward_args = parse_args(sys.argv[1:])
+    filtering_args = FilteringOptions.parse_args(forward_args)
+    submodule_renames = SubmoduleRenames(parsed_args.commit_remap)
+    if filtering_args.analyze:
+        RepoAnalyze.run(filtering_args)
+    else:
+        filter = RepoFilter(filtering_args, commit_callback=submodule_renames.replace_submodule_renames)
+        filter.run()
+
+
+if __name__ == "__main__":
+    main()
+
+# vim: set sw=2:
