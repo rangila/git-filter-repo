@@ -3821,6 +3821,8 @@ class RepoFilter(object):
       print("[DEBUG] Reverse renames:\n" + str(aggregated_commit_reverse_renames))
     if aggregated_commit_reverse_renames:
       self._aggregated_commit_renames = {aggregated_commit_reverse_renames[k]:v for k,v in self._commit_renames.items() if k != deleted_hash}
+    else:
+      self._aggregated_commit_renames = self._commit_renames
 
   def _record_metadata(self, metadata_dir, orig_refs):
     self._flush_renames()
