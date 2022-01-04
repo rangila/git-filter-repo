@@ -20,8 +20,6 @@ def parse_args(arguments):
     parser = argparse.ArgumentParser(description="Run submodule aware git-filter-repo")
     parser.add_argument("--commit-remap", type=os.fsencode, help=("Path to the commit remap"))
     parsed_args, rest = parser.parse_known_args(arguments)
-    if not parsed_args.commit_remap:
-        raise SystemExit("Error: Need to specify the --commit-remap path")
     return (parsed_args, rest)
 
 
