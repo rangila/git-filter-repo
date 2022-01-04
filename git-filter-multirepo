@@ -6,7 +6,7 @@ import sys
 import subprocess
 
 try:
-    from git_filter_repo import RepoFilter, FilteringOptions, _read_commit_map_from_file, FileChange
+    from git_filter_repo import RepoFilter, FilteringOptions, _read_commit_map_from_file, deleted_hash, FileChange
 except ImportError:
     raise SystemExit(
         "Error: Couldn't find git_filter_repo.py.  Did you forget to make a symlink to git-filter-repo named git_filter_repo.py or did you forget to put the latter in your PYTHONPATH?"
@@ -31,7 +31,11 @@ class SubmoduleRenames:
 
     def _remap_hash(self, file_change: FileChange) -> FileChange:
         if (file_change.mode == FILE_MODE_SUBMODULE) and (file_change.blob_id in self._aggregated_commit_renames):
-            file_change.blob_id = self._aggregated_commit_renames[file_change.blob_id]
+            new_blob_id = self._aggregated_commit_renames[file_change.blob_id]
+            if new_blob_id == deleted_hash:
+                new_blob_id = file_change.blob_id
+                print("[WARNING] Commit referenced by {} was deleted due to previous filtering: it will not be replaced".format(file_change.filename))
+            file_change.blob_id = new_blob_id
         return file_change
 
     def replace_submodule_renames(self, commit, metadata):
@@ -52,4 +56,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-# vim: set sw=2:
